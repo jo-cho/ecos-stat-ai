@@ -37,3 +37,20 @@ def test_single_search_and_examples(monkeypatch):
     assert not app.exception
     assert app.expander[0].label == '조회 정보 및 출처'
     assert not app.expander[0].proto.expanded
+
+
+def test_matplotlib_chart(monkeypatch):
+    async def mock_answer(*args, **kwargs):
+        return {'text': '기준금리 추이', 'calls': [{'tool': 'get_statistic_data', 'success': True,
+            'arguments': {'cycle': 'M'}, 'result': {'cycle': 'M', 'rows': [
+                {'TIME': '202601', 'DATA_VALUE': '2.5', 'ITEM_CODE1': '01', 'ITEM_NAME1': '기준금리', 'UNIT_NAME': '%'},
+                {'TIME': '202602', 'DATA_VALUE': '2.5', 'ITEM_CODE1': '01', 'ITEM_NAME1': '기준금리', 'UNIT_NAME': '%'}]}}]}
+    monkeypatch.setattr('ecos_ai.agent.answer', mock_answer)
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / 'app.py').run()
+    app.text_input(key='ecos_key').set_value('test').run()
+    app.text_input(key='openai_key').set_value('test').run()
+    app.button(key='example_0').click().run()
+    next(b for b in app.button if b.label == '검색하기').click().run(timeout=10)
+    assert not app.exception
+    assert len(app.get('arrow_vega_lite_chart')) == 0
+    assert any(b.label == '그래프 PNG 다운로드' for b in app.get('download_button'))

@@ -6,6 +6,8 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from ecos_ai.agent import answer
+from ecos_ai.rendering import render_chart_png
+from ecos_ai.periods import to_timestamp
 
 load_dotenv()
 st.set_page_config(page_title='경제통계 AI 검색', layout='wide')
@@ -136,7 +138,18 @@ if saved:
         ids = [k for k in ('ITEM_CODE1', 'ITEM_CODE2', 'ITEM_CODE3', 'ITEM_CODE4') if k in df]
         if ids and len(df[ids].drop_duplicates()) == 1 and df['수치'].notna().any():
             plot = df[['TIME', '수치']].dropna().drop_duplicates('TIME').sort_values('TIME')
-            st.line_chart(plot.set_index('TIME'))
+            # ECOS 주기를 이용해 날짜를 해석하고 Matplotlib 정적 이미지로 표시
+            cycle = str(result.get('cycle') or call.get('arguments', {}).get('cycle') or 'M')
+            plot['시점'] = plot['TIME'].map(lambda value: to_timestamp(str(value), cycle))
+            plot = plot.dropna(subset=['시점']).sort_values('시점')
+            if not plot.empty:
+                unit = str(df.iloc[0].get('UNIT_NAME') or '')
+                label = ' / '.join(str(df.iloc[0].get(k) or '') for k in names).strip(' / ') or '수치'
+                chart_data = plot.set_index('시점')[['수치']].rename(columns={'수치': label})
+                image = render_chart_png({'data': chart_data, 'cycle': cycle, 'unit': unit, 'kind': 'original'})
+                st.image(image, use_container_width=True)
+                st.download_button('그래프 PNG 다운로드', image, file_name=f'ecos_chart_{i}.png',
+                                   mime='image/png', key=f'png_{i}')
         visible = df[['TIME', *names, '수치', *(['UNIT_NAME'] if 'UNIT_NAME' in df else [])]].rename(
             columns={'TIME': '시점', 'UNIT_NAME': '단위', **{k: f'항목 {n+1}' for n, k in enumerate(names)}})
         st.dataframe(visible, use_container_width=True, hide_index=True)
