@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from ecos_ai.agent import answer, clean_suggestions
-from ecos_ai.rendering import render_chart_png
 from ecos_ai.periods import to_timestamp
 
 load_dotenv()
@@ -37,12 +36,15 @@ div.stButton>button {border-radius:10px;}
 
 if 'search_result' not in st.session_state:
     st.session_state.search_result = None
+if 'show_raw' not in st.session_state:
+    st.session_state.show_raw = False
 if 'question' not in st.session_state:
     st.session_state.question = ''
 
 
 def clear_result():
     st.session_state.search_result = None
+    st.session_state.show_raw = False
 
 
 def choose_example(value):
@@ -125,37 +127,46 @@ if saved:
     st.subheader('검색 결과')
     st.caption(saved['question'])
     st.markdown(response.get('text') or '답변을 생성하지 못했습니다.')
-    for i, call in enumerate(response.get('calls', [])):
-        result = call.get('result') or {}
-        rows = result.get('rows')
-        if not rows:
-            continue
-        df = pd.DataFrame(rows)
-        if not {'TIME', 'DATA_VALUE'}.issubset(df.columns):
-            continue
-        df['수치'] = pd.to_numeric(df['DATA_VALUE'], errors='coerce')
-        names = [k for k in ('ITEM_NAME1', 'ITEM_NAME2', 'ITEM_NAME3', 'ITEM_NAME4') if k in df]
-        st.markdown(f"**{df.iloc[0].get('STAT_NAME') or '통계 자료'}**")
-        ids = [k for k in ('ITEM_CODE1', 'ITEM_CODE2', 'ITEM_CODE3', 'ITEM_CODE4') if k in df]
-        if ids and len(df[ids].drop_duplicates()) == 1 and df['수치'].notna().any():
-            plot = df[['TIME', '수치']].dropna().drop_duplicates('TIME').sort_values('TIME')
-            # ECOS 주기를 이용해 날짜를 해석하고 Matplotlib 정적 이미지로 표시
-            cycle = str(result.get('cycle') or call.get('arguments', {}).get('cycle') or 'M')
+    if st.button('원데이터 닫기' if st.session_state.show_raw else '원데이터 확인하기', key='raw_data'):
+        st.session_state.show_raw = not st.session_state.show_raw
+        st.rerun()
+    if st.session_state.show_raw:
+        st.subheader('ECOS 원데이터')
+        found = False
+        for i, call in enumerate(response.get('calls', [])):
+            result = call.get('result') or {}
+            rows = result.get('rows')
+            if not call.get('success') or not rows:
+                continue
+            found = True
+            df = pd.DataFrame(rows)
+            st.markdown(f"**{df.iloc[0].get('STAT_NAME') or '통계 자료'}**")
+            # 표와 CSV는 ECOS에서 받은 원본 열과 값을 그대로 제공
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.download_button('원데이터 CSV 다운로드', df.to_csv(index=False).encode('utf-8-sig'),
+                               file_name=f'ecos_raw_{i}.csv', mime='text/csv', key=f'csv_{i}')
+            if not {'TIME', 'DATA_VALUE'}.issubset(df.columns):
+                continue
+            # 그래프용 변환만 별도 사본에 적용하고 원자료는 변경하지 않음
+            plot = df.copy()
+            cycle = str(result.get('cycle') or call.get('arguments', {}).get('cycle') or '')
             plot['시점'] = plot['TIME'].map(lambda value: to_timestamp(str(value), cycle))
-            plot = plot.dropna(subset=['시점']).sort_values('시점')
-            if not plot.empty:
-                unit = str(df.iloc[0].get('UNIT_NAME') or '')
-                label = ' / '.join(str(df.iloc[0].get(k) or '') for k in names).strip(' / ') or '수치'
-                chart_data = plot.set_index('시점')[['수치']].rename(columns={'수치': label})
-                image = render_chart_png({'data': chart_data, 'cycle': cycle, 'unit': unit, 'kind': 'original'})
-                st.image(image, use_container_width=True)
-                st.download_button('그래프 PNG 다운로드', image, file_name=f'ecos_chart_{i}.png',
-                                   mime='image/png', key=f'png_{i}')
-        visible = df[['TIME', *names, '수치', *(['UNIT_NAME'] if 'UNIT_NAME' in df else [])]].rename(
-            columns={'TIME': '시점', 'UNIT_NAME': '단위', **{k: f'항목 {n+1}' for n, k in enumerate(names)}})
-        st.dataframe(visible, use_container_width=True, hide_index=True)
-        st.download_button('CSV 다운로드', visible.to_csv(index=False).encode('utf-8-sig'),
-                           file_name=f'ecos_{i}.csv', mime='text/csv', key=f'csv_{i}')
+            plot['수치'] = pd.to_numeric(plot['DATA_VALUE'].astype(str).str.replace(',', '', regex=False), errors='coerce')
+            names = [k for k in ('ITEM_NAME1', 'ITEM_NAME2', 'ITEM_NAME3', 'ITEM_NAME4') if k in plot]
+            codes = [k for k in ('ITEM_CODE1', 'ITEM_CODE2', 'ITEM_CODE3', 'ITEM_CODE4') if k in plot]
+            plot['계열'] = plot.apply(lambda row: ' / '.join(str(row.get(k) or '') for k in names).strip(' / ') or '수치', axis=1)
+            if codes:
+                plot['계열'] += plot[codes].fillna('').astype(str).apply(lambda row: ' (' + '/'.join(row) + ')', axis=1)
+            plot['단위'] = plot['UNIT_NAME'].fillna('') if 'UNIT_NAME' in plot else ''
+            for unit, group in plot.dropna(subset=['시점', '수치']).groupby('단위', dropna=False):
+                chart = group.drop_duplicates(['시점', '계열'], keep='last').pivot(index='시점', columns='계열', values='수치').sort_index()
+                if not chart.empty:
+                    st.caption(f"단위: {unit or '미제공'}")
+                    st.line_chart(chart, use_container_width=True)
+            if result.get('truncated'):
+                st.warning('조회 상한으로 원데이터 일부가 제외되었습니다.')
+        if not found:
+            st.info('이번 검색에는 확인할 수 있는 시계열 원데이터가 없습니다.')
     suggestions = clean_suggestions(response.get('suggestions'), saved['question'])
     if suggestions:
         st.subheader('이런 검색도 해보세요')

@@ -20,7 +20,7 @@ Windows에서 python 명령이 없다면 py를 사용하세요. Streamlit Cloud�
 3. 질문을 입력하거나 예시를 눌러 입력창에 채웁니다.
 4. 검색하기를 누르면 이전 결과를 교체합니다. 이전 질문은 모델에 전달하지 않습니다.
 5. 대기 중 안내 문구가 순환합니다. 실제 세부 단계나 완료율을 나타내지 않습니다.
-6. 답변·표·Matplotlib 정적 그래프를 확인하고 조회일·코드·조회 조건은 접힌 조회 정보 영역에서 확인합니다.
+6. LLM 답변을 확인하고 조회일·코드·조회 조건은 접힌 조회 정보 영역에서 확인합니다.
 
 모델 옵션: GPT-5.5(기존 기본값), GPT-6.1 Sol, GPT-6 Luna, GPT-6 Astra, GPT-5 mini.
 공식 모델 문서: https://developers.openai.com/api/docs/models
@@ -38,7 +38,7 @@ python -m pytest tests -q
 
 모의 API로 예시 입력·모델 전달·독립 질의·결과 교체·접힌 조회 정보를 확인합니다. OpenAI API 실제 모델 호출은 별도 키가 필요합니다.
 
-그래프는 PNG로 다운로드할 수 있습니다. Streamlit Cloud에서는 packages.txt로 fonts-nanum을 설치하고 나눔고딕을 사용합니다. Windows에서는 설치된 맑은 고딕을 사용합니다.
+기본 결과는 LLM 답변만 표시합니다. 원데이터 확인하기 버튼을 누르면 ECOS 원본 표·CSV 다운로드·인터랙티브 그래프를 표시합니다. 버튼은 표시 상태만 변경하며 API를 다시 호출하지 않습니다. Matplotlib과 폰트 패키지는 사용하지 않습니다. 기존 GitHub 저장소의 packages.txt와 ecos_ai/rendering.py는 삭제하세요.
 
 ## 관련 추천 검색
 

@@ -39,7 +39,7 @@ def test_single_search_and_examples(monkeypatch):
     assert not app.expander[0].proto.expanded
 
 
-def test_matplotlib_chart(monkeypatch):
+def test_raw_data_toggle(monkeypatch):
     async def mock_answer(*args, **kwargs):
         return {'text': '기준금리 추이', 'calls': [{'tool': 'get_statistic_data', 'success': True,
             'arguments': {'cycle': 'M'}, 'result': {'cycle': 'M', 'rows': [
@@ -52,8 +52,18 @@ def test_matplotlib_chart(monkeypatch):
     app.button(key='example_0').click().run()
     next(b for b in app.button if b.label == '검색하기').click().run(timeout=10)
     assert not app.exception
-    assert len(app.get('arrow_vega_lite_chart')) == 0
-    assert any(b.label == '그래프 PNG 다운로드' for b in app.get('download_button'))
+    assert len(app.dataframe) == 0
+    app.button(key='raw_data').click().run()
+    assert not app.exception
+    assert len(app.dataframe) == 1
+    assert any('vega_lite_chart' in node.type for node in app), [node.type for node in app]
+    assert any(b.label == '원데이터 CSV 다운로드' for b in app.get('download_button'))
+    app.button(key='raw_data').click().run()
+    assert len(app.dataframe) == 0
+    app.button(key='raw_data').click().run()
+    app.text_area(key='question').set_value('새 질문').run()
+    assert not app.session_state.show_raw
+    assert app.session_state.search_result is None
 
 
 def test_independent_suggestions(monkeypatch):
@@ -78,11 +88,3 @@ def test_independent_suggestions(monkeypatch):
     assert received[-1] == (recommendation, [])
     assert not app.exception
 
-
-def test_font_selection(monkeypatch):
-    from types import SimpleNamespace
-    from ecos_ai import rendering
-    monkeypatch.setattr(rendering.font_manager.fontManager, 'ttflist', [SimpleNamespace(name='NanumGothic')])
-    assert rendering._font_family() == 'NanumGothic'
-    monkeypatch.setattr(rendering.font_manager.fontManager, 'ttflist', [SimpleNamespace(name='Malgun Gothic')])
-    assert rendering._font_family() == 'Malgun Gothic'
