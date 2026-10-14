@@ -5,7 +5,7 @@ import time
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-from ecos_ai.agent import answer
+from ecos_ai.agent import answer, clean_suggestions
 from ecos_ai.rendering import render_chart_png
 from ecos_ai.periods import to_timestamp
 
@@ -94,11 +94,12 @@ with st.container(border=True):
                           disabled=not (ecos_key.strip() and openai_key.strip()))
     st.caption('검색마다 새로운 질문으로 처리하며, 이전 결과는 교체됩니다.')
 
-st.caption('질문 예시')
-columns = st.columns(3)
-for i, example in enumerate(EXAMPLES):
-    columns[i].button(example, key=f'example_{i}', on_click=choose_example,
-                      args=(example,), use_container_width=True)
+if not st.session_state.search_result:
+    st.caption('질문 예시')
+    columns = st.columns(3)
+    for i, example in enumerate(EXAMPLES):
+        columns[i].button(example, key=f'example_{i}', on_click=choose_example,
+                          args=(example,), use_container_width=True)
 
 if submitted:
     clear_result()
@@ -155,6 +156,12 @@ if saved:
         st.dataframe(visible, use_container_width=True, hide_index=True)
         st.download_button('CSV 다운로드', visible.to_csv(index=False).encode('utf-8-sig'),
                            file_name=f'ecos_{i}.csv', mime='text/csv', key=f'csv_{i}')
+    suggestions = clean_suggestions(response.get('suggestions'), saved['question'])
+    if suggestions:
+        st.subheader('이런 검색도 해보세요')
+        for i, suggestion in enumerate(suggestions):
+            st.button(suggestion, key=f'suggestion_{i}', on_click=choose_example,
+                      args=(suggestion,), use_container_width=True)
     with st.expander('조회 정보 및 출처', expanded=False):
         st.caption(f"출처: 한국은행 ECOS Open API · 모델: {saved['model']}")
         if response.get('query_info'):

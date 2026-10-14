@@ -54,3 +54,35 @@ def test_matplotlib_chart(monkeypatch):
     assert not app.exception
     assert len(app.get('arrow_vega_lite_chart')) == 0
     assert any(b.label == '그래프 PNG 다운로드' for b in app.get('download_button'))
+
+
+def test_independent_suggestions(monkeypatch):
+    from ecos_ai.agent import clean_suggestions
+    assert clean_suggestions(['같은 기간 물가를 보여줘', '물가와 금리를 비교해줘',
+                              '2025년 월별 소비자물가지수를 보여줘']) == ['2025년 월별 소비자물가지수를 보여줘']
+    received = []
+    recommendation = '2025년 월별 소비자물가지수를 보여줘'
+    async def mock_answer(question, history, **kwargs):
+        received.append((question, history))
+        return {'text': '조회 결과', 'calls': [], 'suggestions': [recommendation]}
+    monkeypatch.setattr('ecos_ai.agent.answer', mock_answer)
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / 'app.py').run()
+    app.text_input(key='ecos_key').set_value('test').run()
+    app.text_input(key='openai_key').set_value('test').run()
+    app.button(key='example_1').click().run()
+    next(b for b in app.button if b.label == '검색하기').click().run()
+    app.button(key='suggestion_0').click().run()
+    assert app.text_area(key='question').value == recommendation
+    assert app.session_state.search_result is None
+    next(b for b in app.button if b.label == '검색하기').click().run()
+    assert received[-1] == (recommendation, [])
+    assert not app.exception
+
+
+def test_font_selection(monkeypatch):
+    from types import SimpleNamespace
+    from ecos_ai import rendering
+    monkeypatch.setattr(rendering.font_manager.fontManager, 'ttflist', [SimpleNamespace(name='NanumGothic')])
+    assert rendering._font_family() == 'NanumGothic'
+    monkeypatch.setattr(rendering.font_manager.fontManager, 'ttflist', [SimpleNamespace(name='Malgun Gothic')])
+    assert rendering._font_family() == 'Malgun Gothic'

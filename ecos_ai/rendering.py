@@ -7,20 +7,26 @@ from io import BytesIO
 from threading import RLock
 
 import matplotlib
-# 그래프 글꼴을 맑은 고딕으로 설정
-matplotlib.rcParams["font.family"] = "Malgun Gothic"
-# 음수 부호가 깨지는 현상 방지
-matplotlib.rcParams["axes.unicode_minus"] = False
-
+matplotlib.use("Agg")
 from matplotlib.figure import Figure
 from matplotlib import dates as mdates
 from matplotlib import ticker as mticker
+from matplotlib import font_manager
 import numpy as np
 import pandas as pd
 
 # 공유 Streamlit 환경에서 사용자별 동시 그래프 생성 시 충돌을 방지
 _CHART_LOCK = RLock()
 _PALETTE = ("#2563eb", "#0f766e", "#d97706", "#7c3aed", "#e11d48", "#0891b2", "#4f46e5", "#475569")
+
+
+def _font_family():
+    # Cloud의 나눔고딕과 Windows의 맑은 고딕을 자동으로 선택
+    families = {font.name for font in font_manager.fontManager.ttflist}
+    for name in ('NanumGothic', 'Malgun Gothic', 'Noto Sans CJK KR', 'AppleGothic'):
+        if name in families:
+            return name
+    return 'DejaVu Sans'
 
 
 def format_period(value: object, cycle: str) -> str:
@@ -119,7 +125,7 @@ def render_chart_png(chart: dict) -> bytes:
         raise ValueError("그래프 시점을 날짜로 변환할 수 없습니다.")
 
     with _CHART_LOCK:
-        font = matplotlib.rcParams["font.family"]
+        font = _font_family()
         fig = Figure(figsize=(11.5, 4.6), dpi=150, facecolor="#ffffff")
         ax = fig.add_subplot(111)
         ax.set_facecolor("#ffffff")
@@ -165,6 +171,7 @@ def render_chart_png(chart: dict) -> bytes:
         ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
         ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
         ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
+        # 유니코드 마이너스 대신 일반 음수 부호를 사용
         ax.yaxis.set_major_formatter(mticker.FuncFormatter(_format_tick))
         ax.yaxis.grid(True, color="#e7edf5", linewidth=1)
         ax.xaxis.grid(False)
