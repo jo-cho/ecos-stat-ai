@@ -22,10 +22,15 @@ RULES = '''당신은 한국은행 ECOS 경제통계 조회 도우미입니다.
 현재 날짜: {today}.
 '''
 
-async def answer(question: str, history: list[dict] | None = None, model: str | None = None):
-    if not os.getenv('OPENAI_API_KEY'):
-        raise RuntimeError('OPENAI_API_KEY를 .env에 설정하세요.')
+async def answer(question: str, history: list[dict] | None = None, model: str | None = None,
+                 ecos_api_key: str | None = None, openai_api_key: str | None = None):
+    # 인증키는 요청 단위로 전달하고 서버 전체 환경변수는 수정하지 않음
+    if not openai_api_key or not openai_api_key.strip():
+        raise RuntimeError('OpenAI API 키를 입력하세요.')
+    if not ecos_api_key or not ecos_api_key.strip():
+        raise RuntimeError('ECOS API 키를 입력하세요.')
     environment = dict(os.environ)
+    environment['ECOS_API_KEY'] = ecos_api_key.strip()
     root = str(Path(__file__).resolve().parent.parent)
     environment['PYTHONPATH'] = root + os.pathsep + environment.get('PYTHONPATH', '')
     server = StdioServerParameters(command=sys.executable,
@@ -45,7 +50,7 @@ async def answer(question: str, history: list[dict] | None = None, model: str | 
             if h['role'] in ('user', 'assistant'):
                 messages.append({'role': h['role'], 'content': str(h['content'])[:5000]})
         messages.append({'role': 'user', 'content': question})
-        api = AsyncOpenAI()
+        api = AsyncOpenAI(api_key=openai_api_key.strip())
         calls = []
         for _ in range(12):
             resp = await api.responses.create(

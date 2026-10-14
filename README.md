@@ -72,3 +72,14 @@ python -m pytest -q
 - https://ecos.bok.or.kr/api/
 - https://py.sdk.modelcontextprotocol.io/
 - https://developers.openai.com/api/docs/guides/function-calling
+
+
+## 공유 Streamlit 사이트에서 API 키 직접 입력
+
+Streamlit Community Cloud에 배포한 뒤, 웹 앱 왼쪽 사이드바의 **한국은행 ECOS API 키**와 **OpenAI API 키** 입력창에 각 이용자가 자신의 키를 입력하면 됩니다. 두 키가 모두 입력되어야 질문창이 활성화됩니다.
+
+- `.env`는 로컬 테스트용 예시이며, 이 버전의 웹 화면은 사용자가 사이드바에 입력한 키를 우선 사용합니다. 키를 입력하지 않으면 질문할 수 없습니다.
+- 키는 `type="password"`로 가려져 표시되고, 별도 파일이나 대화 내역에 저장하지 않습니다. 단, Streamlit 세션 메모리에는 세션 동안 유지됩니다.
+- ECOS 키는 MCP 서버를 실행하는 해당 요청의 자식 프로세스 환경변수에만 전달하고, OpenAI 키는 해당 요청의 OpenAI 클라이언트에만 전달합니다. 서버 전역 환경변수를 변경하지 않으므로 다른 사용자의 키와 섞이지 않도록 설계했습니다.
+- API 키의 유효성은 실제 호출 시 확인되며, 사이트 운영자 또는 인프라의 로그 및 런타임 접근 권한은 별도로 통제해야 합니다.
+- 앱의 GitHub 저장소에는 `.env`를 올리지 마세요.
