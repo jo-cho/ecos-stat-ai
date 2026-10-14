@@ -8,7 +8,7 @@ from html import escape
 import streamlit as st
 from dotenv import load_dotenv
 
-from ecos_ai.agent import answer
+from ecos_ai.agent import answer, probe_ecos
 from ecos_ai.presentation import build_report
 from ecos_ai.rendering import prepare_table_frame, render_chart_png, static_table_html
 
@@ -83,6 +83,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 def _clear_result() -> None:
     # 질문이나 인증 정보가 바뀌면 기존 사용자 결과를 화면에서 제거
     st.session_state.single_result = None
+    st.session_state.mcp_probe = None
 
 
 def _set_example(value: str) -> None:
@@ -141,6 +142,11 @@ def _display_answer(question: str, result: dict) -> None:
             st.caption("요약은 ECOS 조회값만 이용합니다. 경기 원인이나 정책 효과를 임의로 추정하지 않습니다.")
     else:
         diagnostic = report.get("diagnostics", {})
+        failed_calls = [c for c in result.get("calls", []) if not c.get("success")]
+        if failed_calls:
+            first = failed_calls[0]
+            st.error(f"MCP 도구 오류: {first.get('tool', '알 수 없음')} · "
+                     f"{first.get('error_detail') or first.get('error_type') or '원인 미확인'}")
         if diagnostic.get("calls", 0) == 0:
             st.info("ECOS 통계표 또는 항목 검색만 수행되었습니다. 실제 시계열 조회가 실행되지 않았습니다.")
         elif diagnostic.get("errors"):
@@ -181,11 +187,16 @@ def _display_answer(question: str, result: dict) -> None:
                 if src.get("truncated"):
                     st.warning("조회 상한으로 일부 자료가 제외됐을 수 있습니다.")
     if result.get("calls"):
-        with st.expander("MCP 호출 기록", expanded=False):
+        failed = any(not call.get('success') for call in result['calls'])
+        with st.expander("MCP 호출 기록", expanded=failed):
             for call in result["calls"]:
                 st.markdown(f"**{escape(call['tool'])}** · {'성공' if call['success'] else '오류'}")
                 if call.get("row_count") is not None:
                     st.caption(f"반환 행: {call['row_count']}건")
+                if not call.get('success'):
+                    st.caption(f"오류 유형: {call.get('error_type') or '알 수 없음'}")
+                    if call.get('error_detail'):
+                        st.error(call['error_detail'])
                 st.code(json.dumps(call.get("arguments", {}), ensure_ascii=False, indent=2), language="json")
 
 
@@ -194,6 +205,8 @@ if "single_result" not in st.session_state:
     st.session_state.single_result = None
 if "question_text" not in st.session_state:
     st.session_state.question_text = ""
+if "mcp_probe" not in st.session_state:
+    st.session_state.mcp_probe = None
 
 with st.sidebar:
     st.markdown("### 🔐 개인 API 키")
@@ -205,6 +218,15 @@ with st.sidebar:
         st.success("키 입력 완료 · 실제 접속 시 유효성 확인")
     else:
         st.info("질문 실행을 위해 두 API 키를 입력하세요.")
+    if st.button("🔎 MCP + ECOS 연결 진단", use_container_width=True, disabled=not ecos_key.strip()):
+        with st.spinner("LLM을 사용하지 않고 ECOS 연결을 점검하는 중입니다..."):
+            st.session_state.mcp_probe = asyncio.run(probe_ecos(ecos_key))
+    if st.session_state.mcp_probe is not None:
+        probe = st.session_state.mcp_probe
+        if probe['ok']:
+            st.success(probe['detail'])
+        else:
+            st.error(f"{probe['stage']}: {probe['detail']}")
     st.divider()
     st.markdown("### 💡 추천 질문")
     for i, example in enumerate(EXAMPLES):

@@ -9,6 +9,7 @@ from typing import Callable
 from mcp import Client, StdioServerParameters
 from mcp.types import TextContent
 from ecos_ai.mcp_result import normalize_mcp_payload, normalize_series_payload
+from ecos_ai.diagnostics import safe_error_text, tool_error_text
 from openai import AsyncOpenAI
 
 RULES = '''당신은 한국은행 ECOS 경제통계 조회 도우미입니다.
@@ -27,6 +28,43 @@ RULES = '''당신은 한국은행 ECOS 경제통계 조회 도우미입니다.
 증감률 및 그래프와 통계표는 화면의 Python 코드가 계산·표시하므로, 답변은 2~4문장의 간결한 내용 요약으로 작성하세요. 요청한 계산을 실제 데이터 없이 추정하지 마세요.
 현재 날짜: {today}.
 '''
+
+async def probe_ecos(ecos_api_key: str) -> dict:
+    """LLM 없이 동일한 stdio MCP 경로로 ECOS 주요지표 API를 확인합니다."""
+    if not ecos_api_key or not ecos_api_key.strip():
+        return {'ok': False, 'stage': 'API 키 입력', 'detail': 'ECOS API 키를 입력하세요.'}
+    environment = dict(os.environ)
+    environment['ECOS_API_KEY'] = ecos_api_key.strip()
+    root = str(Path(__file__).resolve().parent.parent)
+    environment['PYTHONPATH'] = root + os.pathsep + environment.get('PYTHONPATH', '')
+    server = StdioServerParameters(command=sys.executable, args=['-m', 'ecos_ai.server'], env=environment)
+    stage = 'MCP 서버 연결'
+    try:
+        async with Client(server) as mcp:
+            listed = await mcp.list_tools()
+            tool_names = [t.name for t in listed.tools]
+            if 'get_key_statistics' not in tool_names:
+                return {'ok': False, 'stage': 'MCP 도구 등록',
+                        'detail': 'get_key_statistics 도구를 찾지 못했습니다.'}
+            stage = 'ECOS API 테스트'
+            result = await mcp.call_tool('get_key_statistics', {'limit': 1})
+            if result.is_error:
+                return {'ok': False, 'stage': stage,
+                        'detail': tool_error_text(result, ecos_api_key)}
+            payload = normalize_mcp_payload(result.structured_content, result.content)
+            if 'error' in payload:
+                return {'ok': False, 'stage': stage,
+                        'detail': safe_error_text(payload.get('detail') or payload['error'], ecos_api_key)}
+            if not isinstance(payload.get('rows'), list):
+                return {'ok': False, 'stage': 'MCP 응답 해석',
+                        'detail': 'ECOS 응답에 rows 목록이 없습니다.'}
+            return {'ok': True, 'stage': '완료',
+                    'detail': f"MCP 연결 및 ECOS 주요지표 API 호출 성공 · {len(payload['rows'])}건 확인"}
+    except Exception as exc:
+        # 예상하지 못한 예외는 원문을 노출하지 않고 종류만 표시
+        return {'ok': False, 'stage': stage,
+                'detail': f'{type(exc).__name__}: 서버 실행/연결 또는 결과 변환 과정에서 실패했습니다.'}
+
 
 async def answer(question: str, history: list[dict] | None = None, model: str | None = None,
                  ecos_api_key: str | None = None, openai_api_key: str | None = None,
@@ -79,27 +117,36 @@ async def answer(question: str, history: list[dict] | None = None, model: str | 
             for f in funcs:
                 report_progress(f.name)
                 args = {}
+                payload = {}
                 try:
                     args = json.loads(f.arguments)
                     result = await mcp.call_tool(f.name, args)
                     if result.is_error:
-                        payload = {'error': 'ECOS 도구 실행 실패', 'detail': ' | '.join(
-                            x.text for x in result.content if isinstance(x, TextContent))[:500]}
+                        # ToolError 상세 내용은 API 키를 제거한 뒤 진단 화면에도 전달
+                        payload = {
+                            'error': 'MCP_TOOL_ERROR',
+                            'detail': tool_error_text(result, ecos_api_key, openai_api_key),
+                        }
                     else:
-                        # MCP SDK는 구조화 채널과 JSON 텍스트 채널을 모두 지원
                         payload = normalize_mcp_payload(result.structured_content, result.content)
                         if f.name == 'get_statistic_data':
-                            # 행 데이터가 없으면 성공 처리하지 않고 원인을 전달
                             payload = normalize_series_payload(payload)
+                except ValueError as exc:
+                    payload = {'error': 'RESPONSE_FORMAT_ERROR',
+                               'detail': safe_error_text(str(exc), ecos_api_key, openai_api_key)}
                 except Exception as exc:
-                    # 오류에 포함될 수 있는 인증정보 및 내부 경로는 모델에 전달하지 않음
-                    payload = {'error': type(exc).__name__, 'detail': ('MCP 결과를 ECOS 데이터로 해석하지 못했습니다.'
-                                                  if isinstance(exc, ValueError) else '요청 검증 또는 도구 통신 실패')}
-                calls.append({'tool': f.name, 'arguments': args,
-                              'success': 'error' not in payload,
-                              'result': payload if f.name == 'get_statistic_data' and 'error' not in payload else None,
-                              'row_count': len(payload.get('rows', [])) if f.name == 'get_statistic_data' and isinstance(payload.get('rows'), list) else None,
-                              'error_type': payload.get('error')})
+                    # 내부 경로나 인증정보가 포함될 수 있는 원시 예외는 표시하지 않음
+                    payload = {'error': type(exc).__name__,
+                               'detail': 'MCP 호출 또는 도구 통신 중 예기치 못한 오류가 발생했습니다.'}
+                error = payload.get('error')
+                calls.append({
+                    'tool': f.name, 'arguments': args,
+                    'success': not bool(error),
+                    'result': payload if f.name == 'get_statistic_data' and not error else None,
+                    'row_count': len(payload.get('rows', [])) if f.name == 'get_statistic_data' and isinstance(payload.get('rows'), list) else None,
+                    'error_type': error,
+                    'error_detail': payload.get('detail') if error else None,
+                })
                 messages.append({'type': 'function_call_output', 'call_id': f.call_id,
                                  'output': json.dumps(payload, ensure_ascii=False, default=str)[:180000]})
         report_progress('finishing')

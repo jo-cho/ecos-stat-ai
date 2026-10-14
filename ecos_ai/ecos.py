@@ -32,9 +32,16 @@ class EcosAPI:
             res = self.session.get(url, timeout=(5, 25))
             res.raise_for_status()
             payload = res.json()
-        except (requests.RequestException, ValueError) as exc:
-            # 인증키가 포함된 예외의 URL을 외부로 노출하지 않음
-            raise EcosError('ECOS API 연결 또는 JSON 해석 실패') from None
+        except requests.Timeout:
+            raise EcosError('ECOS API 응답 시간이 초과되었습니다.') from None
+        except requests.HTTPError as exc:
+            # 전체 URL에 API 키가 포함되므로 상태 코드만 노출
+            status = getattr(getattr(exc, 'response', None), 'status_code', '알 수 없음')
+            raise EcosError(f'ECOS HTTP 오류(상태 코드 {status})') from None
+        except requests.RequestException:
+            raise EcosError('ECOS 네트워크 연결에 실패했습니다.') from None
+        except ValueError:
+            raise EcosError('ECOS 응답을 JSON으로 읽지 못했습니다.') from None
         if 'RESULT' in payload:
             detail = payload['RESULT']
             raise EcosError(f"ECOS: {detail.get('CODE', '')}: {detail.get('MESSAGE', '')}")
