@@ -1,10 +1,6 @@
 """한국은행 ECOS에만 연결되는 읽기 전용 API 클라이언트."""
 import os
 import re
-import json
-import time
-import tempfile
-from pathlib import Path
 from datetime import date
 from urllib.parse import quote
 import requests
@@ -24,54 +20,6 @@ class EcosAPI:
         self.page_size = min(1000, max(1, int(page_size or os.getenv('ECOS_PAGE_SIZE', '500'))))
         self.max_rows = min(10000, max(1, int(max_rows or os.getenv('ECOS_MAX_ROWS', '3000'))))
         self.session = session or requests.Session()
-        self.timeout = (float(os.getenv('ECOS_CONNECT_TIMEOUT', '15')),
-                        float(os.getenv('ECOS_READ_TIMEOUT', '50')))
-        self.retries = min(2, max(0, int(os.getenv('ECOS_RETRIES', '2'))))
-        self.cache_dir = Path(os.getenv('ECOS_CACHE_DIR', str(Path(tempfile.gettempdir()) / 'ecos-stat-ai')))
-        self.cache_ttl = max(0, int(os.getenv('ECOS_CACHE_TTL', '86400')))
-
-    def catalog(self):
-        # 인증키를 저장하지 않는 공개 메타데이터 캐시를 질문 간 재사용
-        path = self.cache_dir / 'catalog-v1.json'
-        try:
-            saved = json.loads(path.read_text(encoding='utf-8'))
-            result = saved['result']
-            if (0 <= time.time() - saved['saved_at'] < self.cache_ttl
-                    and isinstance(result.get('rows'), list) and not result.get('truncated')):
-                return result
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            pass
-        result = self.pages('StatisticTableList')
-        if not result['truncated']:
-            temporary = None
-            try:
-                self.cache_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=self.cache_dir,
-                                                 delete=False) as handle:
-                    json.dump({'saved_at': time.time(), 'result': result}, handle, ensure_ascii=False)
-                    temporary = Path(handle.name)
-                temporary.replace(path)
-            except OSError:
-                pass
-            finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
-        return result
-
-    def _get(self, url):
-        # 시간 초과와 일시적 서버 오류만 제한적으로 재시도
-        for attempt in range(self.retries + 1):
-            try:
-                response = self.session.get(url, timeout=self.timeout)
-                if getattr(response, 'status_code', 200) in (429, 502, 503, 504) and attempt < self.retries:
-                    response.close()
-                    time.sleep(0.5 * (attempt + 1))
-                    continue
-                return response
-            except (requests.Timeout, requests.ConnectionError):
-                if attempt >= self.retries:
-                    raise
-                time.sleep(0.5 * (attempt + 1))
 
     def request(self, service, start=1, end=100, *args):
         allowed = {'StatisticTableList', 'StatisticItemList', 'StatisticSearch', 'KeyStatisticList', 'StatisticWord'}
@@ -81,21 +29,12 @@ class EcosAPI:
         parts.extend(str(p) for p in args)
         url = ROOT + '/' + '/'.join(quote(p, safe='') for p in parts)
         try:
-            res = self._get(url)
+            res = self.session.get(url, timeout=(5, 25))
             res.raise_for_status()
             payload = res.json()
-        except requests.ConnectTimeout:
-            raise EcosError(f'{service}: ECOS 서버 연결 시간이 초과되었습니다.') from None
-        except requests.Timeout:
-            raise EcosError(f'{service}: ECOS API 응답 시간이 초과되었습니다. 잠시 후 다시 조회하세요.') from None
-        except requests.HTTPError as exc:
-            # 전체 URL에 API 키가 포함되므로 상태 코드만 노출
-            status = getattr(getattr(exc, 'response', None), 'status_code', '알 수 없음')
-            raise EcosError(f'ECOS HTTP 오류(상태 코드 {status})') from None
-        except requests.RequestException:
-            raise EcosError('ECOS 네트워크 연결에 실패했습니다.') from None
-        except ValueError:
-            raise EcosError('ECOS 응답을 JSON으로 읽지 못했습니다.') from None
+        except (requests.RequestException, ValueError) as exc:
+            # 인증키가 포함된 예외의 URL을 외부로 노출하지 않음
+            raise EcosError('ECOS API 연결 또는 JSON 해석 실패') from None
         if 'RESULT' in payload:
             detail = payload['RESULT']
             raise EcosError(f"ECOS: {detail.get('CODE', '')}: {detail.get('MESSAGE', '')}")
@@ -125,7 +64,7 @@ class EcosAPI:
         if not keyword or len(keyword.strip()) < 2:
             raise EcosError('두 글자 이상의 통계표 검색어가 필요합니다.')
         # 통계표 전체를 순회한 뒤 실제 ECOS 메타데이터만 대상으로 필터링
-        result = self.catalog()
+        result = self.pages('StatisticTableList')
         terms = [t.casefold() for t in keyword.split() if t.strip()]
         matched = []
         for r in result['rows']:
@@ -133,13 +72,12 @@ class EcosAPI:
             if r.get('SRCH_YN') == 'Y' and all(t in title.casefold() for t in terms):
                 matched.append({'stat_code': r.get('STAT_CODE'), 'stat_name': title,
                                 'cycle': r.get('CYCLE'), 'org': r.get('ORG_NAME')})
-        return {'matches': matched[:min(max(1, limit), 30)], 'catalog_truncated': result['truncated'],
+        return {'matches': matched[:min(limit, 30)], 'catalog_truncated': result['truncated'],
                 'note': '검색 결과가 없으면 통계표명 중 더 짧은 핵심어로 재검색하세요.'}
 
     def items(self, stat_code, limit=100):
         self._code(stat_code)
-        limit = min(300, max(1, int(limit)))
-        data = self.pages('StatisticItemList', stat_code, limit=limit)
+        data = self.pages('StatisticItemList', stat_code)
         out = []
         for r in data['rows'][:min(limit, 300)]:
             out.append({'item_code': r.get('ITEM_CODE'), 'item_name': r.get('ITEM_NAME'),
