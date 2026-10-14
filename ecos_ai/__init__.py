@@ -1,0 +1,1 @@
+"""ECOS-only statistical assistant."""
