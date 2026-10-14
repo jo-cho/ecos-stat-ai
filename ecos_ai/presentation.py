@@ -232,7 +232,7 @@ def build_report(question: str, calls: list[dict], today: date | None = None) ->
         elif growth_name is not None:
             warnings.append('전월·전년동월 증가율 계산에는 ECOS 월별(M) 원계열이 필요합니다.')
 
-        shown = _window(base, question, today)
+        shown = _window(base, question, today).dropna(how="all")
         # 명시적 기간과 조회 기간이 맞지 않을 때 앞 기간을 억지로 표시하지 않음
         if shown.empty:
             warnings.append('질문에서 요청한 기간에 해당하는 조회값이 없습니다.')
