@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from ecos_ai.agent import answer, probe_ecos
 from ecos_ai.presentation import build_report
-from ecos_ai.rendering import prepare_table_frame, render_chart_png, static_table_html
+from ecos_ai.rendering import prepare_table_frame, render_chart_png
 
 load_dotenv()
 st.set_page_config(page_title="경제통계 AI 검색", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
@@ -30,54 +30,6 @@ PROGRESS = {
     "finishing": "표·그래프·통계 요약을 구성하고 있어요.",
 }
 
-CSS = """
-<style>
-:root { --ink:#142840; --blue:#1b54c5; --teal:#117d80; --line:#e3eaf4; }
-.stApp { background: linear-gradient(180deg,#eff5ff 0px,#f7f9fc 230px,#f6f8fb 100%); }
-.block-container { max-width:1180px; padding-top:2.0rem; padding-bottom:4rem; }
-.econ-hero {
-  border-radius:22px; padding:32px 36px; color:white;
-  background:radial-gradient(circle at 90% 2%,rgba(69,190,207,.31),transparent 37%),
-             linear-gradient(110deg,#132b61 5%,#205cc9 70%,#237a9e 115%);
-  box-shadow:0 17px 40px rgba(16,48,118,.17); margin-bottom:22px;
-}
-.econ-hero .eyebrow {font-size:.82rem; letter-spacing:.12em; text-transform:uppercase;
-  color:#baddff; font-weight:700; margin-bottom:10px;}
-.econ-hero h1 { color:white !important; font-size:2.15rem; margin:0 0 10px; letter-spacing:-.035em; }
-.econ-hero p {font-size:1rem; color:#e2efff; margin:0; line-height:1.7;}
-.econ-info { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
-.econ-pill {font-size:.76rem; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.19);
- color:#edf7ff; padding:6px 12px; border-radius:100px; }
-.econ-section {display:flex; align-items:center; justify-content:space-between; gap:12px; margin:28px 0 13px; }
-.econ-section h2 {margin:0; font-size:1.3rem; letter-spacing:-.03em; color:var(--ink);}
-.econ-section .sub {color:#61718a; font-size:.83rem;}
-.econ-card {border:1px solid #e3eaf5; border-radius:17px; padding:19px 24px;
- background:#fff; box-shadow:0 6px 21px rgba(32,62,105,.045); margin-bottom:14px;}
-.econ-card-title {font-size:1.03rem; color:#193351; font-weight:720; margin-bottom:8px;}
-.econ-micro {font-size:.81rem; color:#7a8ba1; margin-top:6px;}
-.econ-table-scroller {border:1px solid #e5eaf3; border-radius:12px; max-height:475px;
- overflow-x:auto; overflow-y:auto; background:#fff;}
-.econ-table {border-collapse:collapse; min-width:100%; font-size:.86rem; font-variant-numeric:tabular-nums;}
-.econ-table th {position:sticky; top:0; z-index:2; background:#eaf1fc; color:#244466;
- text-align:right; white-space:nowrap; padding:11px 16px; border-bottom:1px solid #cfdbea;}
-.econ-table th:first-child {text-align:left;}
-.econ-table td {white-space:nowrap; padding:10px 16px; border-bottom:1px solid #e9eef6; color:#233954;}
-.econ-table td.number {text-align:right;}
-.econ-table td.period {font-weight:650; color:#1b4382; background:#f9fbff;}
-.econ-table tr:nth-child(even) td {background:#f8fafd;}
-.econ-table tr:hover td {background:#eef5ff;}
-.econ-summary-line {margin:9px 0; line-height:1.75; color:#29415b;
- padding:10px 13px; background:#f4f8ff; border-left:3px solid #3c76d6; border-radius:6px;}
-section[data-testid='stSidebar'] {background:#f0f5fd; border-right:1px solid #dce7f6;}
-section[data-testid='stSidebar'] .stButton button {border-radius:11px; white-space:normal; height:auto;
- min-height:44px; padding:10px 13px; text-align:left; background:#fff; border:1px solid #dce6f4;}
-div[data-testid='stTextArea'] textarea {border-radius:13px; border:1px solid #d6e1f1; background:#fff;
- font-size:1.03rem; padding:17px;}
-div.stButton > button[kind='primary'] {border-radius:12px; font-weight:700; min-height:48px;
- box-shadow:0 6px 16px rgba(38,89,184,.18);}
-</style>
-"""
-st.markdown(CSS, unsafe_allow_html=True)
 
 
 def _clear_result() -> None:
@@ -97,11 +49,10 @@ def _display_answer(question: str, result: dict) -> None:
     report = build_report(question, result.get("calls", []))
 
     if report["has_data"]:
-        st.markdown("<div class='econ-section'><h2>01 · 통계 그래프</h2><span class='sub'>Matplotlib · 정적 이미지</span></div>",
-                    unsafe_allow_html=True)
+        st.subheader('01 · 통계 그래프')
         for number, chart in enumerate(report["charts"]):
             with st.container(border=True):
-                st.markdown(f"<div class='econ-card-title'>{escape(chart['title'])}</div>", unsafe_allow_html=True)
+                st.markdown(f"**{chart['title']}**")
                 try:
                     image = render_chart_png(chart)
                     st.image(image, use_container_width=True)
@@ -110,15 +61,14 @@ def _display_answer(question: str, result: dict) -> None:
                 except (ValueError, TypeError) as exc:
                     st.warning("그래프를 생성할 수 없습니다. 자료의 시점과 수치 형식을 확인해 주세요.")
 
-        st.markdown("<div class='econ-section'><h2>02 · 통계표</h2><span class='sub'>최근 행부터 표시 · 정렬·편집 없음</span></div>",
-                    unsafe_allow_html=True)
+        st.subheader('02 · 통계표')
         for number, table in enumerate(report["tables"]):
             with st.container(border=True):
-                st.markdown(f"<div class='econ-card-title'>{escape(table['title'])}</div>", unsafe_allow_html=True)
+                st.markdown(f"**{table['title']}**")
                 try:
                     # 인덱스 이름에 의존하지 않으므로 KeyError('시점') 발생 방지
                     table_frame = prepare_table_frame(table["data"], table["cycle"])
-                    st.markdown(static_table_html(table_frame), unsafe_allow_html=True)
+                    st.dataframe(table_frame.tail(60).iloc[::-1], hide_index=True, use_container_width=True)
                     visible = min(len(table_frame), 60)
                     st.caption(f"표에는 최근 {visible:,}개 시점을 표시합니다. 전체 {len(table_frame):,}개 시점은 CSV에서 확인할 수 있습니다.")
                     st.download_button(
@@ -131,12 +81,11 @@ def _display_answer(question: str, result: dict) -> None:
         for warning in report["warnings"]:
             st.warning(warning)
 
-        st.markdown("<div class='econ-section'><h2>03 · 통계 요약</h2><span class='sub'>ECOS 수치 기반 · 사실 정보만</span></div>",
-                    unsafe_allow_html=True)
+        st.subheader('03 · 통계 요약')
         with st.container(border=True):
             if report["summary"]:
                 for line in report["summary"]:
-                    st.markdown(f"<div class='econ-summary-line'>{escape(line)}</div>", unsafe_allow_html=True)
+                    st.write(line)
             else:
                 st.info("요약할 수 있는 유효 수치가 없습니다.")
             st.caption("요약은 ECOS 조회값만 이용합니다. 경기 원인이나 정책 효과를 임의로 추정하지 않습니다.")
@@ -239,20 +188,8 @@ with st.sidebar:
     st.caption("수치는 ECOS에서만 가져옵니다. LLM은 질문 해석에 이용됩니다.")
     st.caption("공유 사이트에 입력한 키는 사이트 운영자와 클라우드 인프라를 신뢰할 수 있는 경우에만 사용하세요.")
 
-st.markdown(
-    """<div class='econ-hero'>
-      <div class='eyebrow'>ECOS · Statistical Intelligence</div>
-      <h1>경제통계 AI 검색</h1>
-      <p>경제지표를 자연어로 물어보세요. 한국은행 ECOS의 실측 데이터를 바탕으로<br>
-      정돈된 그래프, 통계표, 핵심 수치를 한 화면에 제공합니다.</p>
-      <div class='econ-info'>
-        <span class='econ-pill'>ECOS 단일 데이터 출처</span>
-        <span class='econ-pill'>정적 고해상도 그래프</span>
-        <span class='econ-pill'>한 번에 하나의 질문</span>
-      </div>
-    </div>""",
-    unsafe_allow_html=True,
-)
+st.title("경제통계 AI 검색")
+st.caption("한국은행 ECOS 데이터로 그래프와 통계표를 제공합니다.")
 
 with st.container(border=True):
     st.markdown("**궁금한 경제통계를 입력하세요**")
@@ -284,7 +221,10 @@ if submitted:
                     openai_api_key=openai_key, on_progress=on_progress,
                 ))
                 st.session_state.single_result = {"question": question, "result": response}
-                status.update(label="조회와 답변 구성이 완료되었습니다.", state="complete", expanded=False)
+                data_calls = [c for c in response.get('calls', []) if c['tool'] == 'get_statistic_data' and c.get('success')]
+                failed = any(not c.get('success') for c in response.get('calls', []))
+                label = "일부 조회에 실패했습니다." if failed and data_calls else "조회에 실패했습니다." if failed else "조회가 완료되었습니다." if data_calls else "안내를 확인해 주세요."
+                status.update(label=label, state="error" if failed else "complete", expanded=failed)
             except Exception as exc:
                 # 비밀키 등이 포함된 원본 예외 문자열은 화면에 노출하지 않음
                 st.session_state.single_result = {
@@ -295,11 +235,11 @@ if submitted:
 
 if st.session_state.single_result is not None:
     saved = st.session_state.single_result
-    st.markdown("<div class='econ-section'><h2>조회 결과</h2><span class='sub'>최근 실행한 질문 1건</span></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='econ-card'><strong>질문</strong>　{escape(saved['question'])}</div>", unsafe_allow_html=True)
+    st.subheader('조회 결과')
+    st.write("질문:", saved["question"])
     _display_answer(saved["question"], saved["result"])
 else:
-    st.markdown("<div class='econ-section'><h2>이용 안내</h2></div>", unsafe_allow_html=True)
+    st.subheader('이용 안내')
     cols = st.columns(3)
     for col, title, description in zip(cols,
                                        ("01　질문 입력", "02　ECOS 실측 조회", "03　시각화·요약 확인"),
@@ -307,5 +247,5 @@ else:
                                         "통계표와 항목을 확인하고 수치를 가져옵니다.",
                                         "정적 그래프와 표, 통계 중심 요약을 확인합니다.")):
         with col:
-            st.markdown(f"<div class='econ-card'><strong>{escape(title)}</strong><p class='econ-micro'>{escape(description)}</p></div>",
-                        unsafe_allow_html=True)
+            st.markdown(f"**{title}**")
+            st.write(description)

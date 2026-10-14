@@ -29,6 +29,23 @@ RULES = '''당신은 한국은행 ECOS 경제통계 조회 도우미입니다.
 현재 날짜: {today}.
 '''
 
+
+def model_payload(payload: dict, max_chars: int = 60000) -> dict:
+    """화면 원자료는 유지하고 모델에는 크기가 제한된 유효 JSON을 전달합니다."""
+    result = dict(payload)
+    for field in ('rows', 'items', 'matches'):
+        values = result.get(field)
+        if not isinstance(values, list):
+            continue
+        selected = values[:200]
+        while selected and len(json.dumps({**result, field: selected}, ensure_ascii=False, default=str)) > max_chars:
+            selected = selected[:len(selected) // 2]
+        result[field] = selected
+        if len(selected) < len(values):
+            result['model_input_truncated'] = True
+            result['returned_row_count'] = len(values)
+    return result
+
 async def probe_ecos(ecos_api_key: str) -> dict:
     """LLM 없이 동일한 stdio MCP 경로로 ECOS 주요지표 API를 확인합니다."""
     if not ecos_api_key or not ecos_api_key.strip():
@@ -46,7 +63,7 @@ async def probe_ecos(ecos_api_key: str) -> dict:
             if 'get_key_statistics' not in tool_names:
                 return {'ok': False, 'stage': 'MCP 도구 등록',
                         'detail': 'get_key_statistics 도구를 찾지 못했습니다.'}
-            stage = 'ECOS API 테스트'
+            stage = 'ECOS 주요지표 API 테스트'
             result = await mcp.call_tool('get_key_statistics', {'limit': 1})
             if result.is_error:
                 return {'ok': False, 'stage': stage,
@@ -58,8 +75,13 @@ async def probe_ecos(ecos_api_key: str) -> dict:
             if not isinstance(payload.get('rows'), list):
                 return {'ok': False, 'stage': 'MCP 응답 해석',
                         'detail': 'ECOS 응답에 rows 목록이 없습니다.'}
+            stage = 'ECOS 통계표 목록 테스트'
+            catalog = await mcp.call_tool('find_statistics', {'keyword': '금리', 'limit': 1})
+            if catalog.is_error:
+                return {'ok': False, 'stage': stage, 'detail': tool_error_text(catalog, ecos_api_key)}
+            normalize_mcp_payload(catalog.structured_content, catalog.content)
             return {'ok': True, 'stage': '완료',
-                    'detail': f"MCP 연결 및 ECOS 주요지표 API 호출 성공 · {len(payload['rows'])}건 확인"}
+                    'detail': f"MCP 연결·주요지표·통계표 목록 조회 성공 · {len(payload['rows'])}건 확인"}
     except Exception as exc:
         # 예상하지 못한 예외는 원문을 노출하지 않고 종류만 표시
         return {'ok': False, 'stage': stage,
@@ -103,6 +125,7 @@ async def answer(question: str, history: list[dict] | None = None, model: str | 
         messages.append({'role': 'user', 'content': question})
         api = AsyncOpenAI(api_key=openai_api_key.strip())
         calls = []
+        timeout_failures = 0
         for _ in range(12):
             report_progress('preparing_answer')
             resp = await api.responses.create(
@@ -147,7 +170,11 @@ async def answer(question: str, history: list[dict] | None = None, model: str | 
                     'error_type': error,
                     'error_detail': payload.get('detail') if error else None,
                 })
+                if error and '초과' in str(payload.get('detail', '')):
+                    timeout_failures += 1
+                if timeout_failures >= 2:
+                    return {'text': 'ECOS 요청이 반복해서 시간 초과되어 조회를 중단했습니다. 잠시 후 다시 시도하세요.', 'calls': calls}
                 messages.append({'type': 'function_call_output', 'call_id': f.call_id,
-                                 'output': json.dumps(payload, ensure_ascii=False, default=str)[:180000]})
+                                 'output': json.dumps(model_payload(payload), ensure_ascii=False, default=str)})
         report_progress('finishing')
         return {'text': '도구 호출 횟수 한도에 도달했습니다. 검색어를 더 구체적으로 입력해 주세요.', 'calls': calls}
