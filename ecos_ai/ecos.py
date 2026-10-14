@@ -24,9 +24,9 @@ class EcosAPI:
         self.page_size = min(1000, max(1, int(page_size or os.getenv('ECOS_PAGE_SIZE', '500'))))
         self.max_rows = min(10000, max(1, int(max_rows or os.getenv('ECOS_MAX_ROWS', '3000'))))
         self.session = session or requests.Session()
-        self.timeout = (float(os.getenv('ECOS_CONNECT_TIMEOUT', '5')),
-                        float(os.getenv('ECOS_READ_TIMEOUT', '25')))
-        self.retries = min(2, max(0, int(os.getenv('ECOS_RETRIES', '1'))))
+        self.timeout = (float(os.getenv('ECOS_CONNECT_TIMEOUT', '15')),
+                        float(os.getenv('ECOS_READ_TIMEOUT', '50')))
+        self.retries = min(2, max(0, int(os.getenv('ECOS_RETRIES', '2'))))
         self.cache_dir = Path(os.getenv('ECOS_CACHE_DIR', str(Path(tempfile.gettempdir()) / 'ecos-stat-ai')))
         self.cache_ttl = max(0, int(os.getenv('ECOS_CACHE_TTL', '86400')))
 
