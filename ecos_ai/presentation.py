@@ -11,18 +11,19 @@ from typing import Any
 
 import pandas as pd
 
+from ecos_ai.mcp_result import normalize_series_payload
+
 
 ITEM_CODE_KEYS = tuple(f"ITEM_CODE{i}" for i in range(1, 5))
 ITEM_NAME_KEYS = tuple(f"ITEM_NAME{i}" for i in range(1, 5))
 
 
 def _normalize_result(value: Any) -> dict:
-    # MCP SDK가 일부 결과를 result 필드로 감싸는 형태까지 처리
-    if not isinstance(value, dict):
+    # 기존 세션에 저장된 JSON 텍스트 래퍼도 읽어 복구
+    try:
+        return normalize_series_payload(value)
+    except ValueError:
         return {}
-    if isinstance(value.get('result'), dict):
-        return value['result']
-    return value
 
 
 def _to_timestamp(value: str, cycle: str) -> pd.Timestamp | None:
@@ -107,26 +108,43 @@ def build_report(question: str, calls: list[dict], today: date | None = None) ->
     sources = []
     truncated = False
     seen_sources = set()
+    diagnostics = {'calls': 0, 'successful_calls': 0, 'received_rows': 0,
+                   'invalid_period_rows': 0, 'invalid_value_rows': 0,
+                   'accepted_rows': 0, 'errors': [], 'available_period': None}
+    seen_times = []
 
     for call in calls or []:
-        if call.get('tool') != 'get_statistic_data' or not call.get('success'):
+        if call.get('tool') != 'get_statistic_data':
+            continue
+        diagnostics['calls'] += 1
+        if not call.get('success'):
+            diagnostics['errors'].append(str(call.get('error_type') or '도구 호출 오류'))
             continue
         result = _normalize_result(call.get('result'))
         rows = result.get('rows', [])
-        if not isinstance(rows, list):
+        if not isinstance(rows, list) or not result:
+            diagnostics['errors'].append('MCP 통계 결과 구조를 인식하지 못했습니다.')
             continue
+        diagnostics['successful_calls'] += 1
+        diagnostics['received_rows'] += len(rows)
         truncated = truncated or bool(result.get('truncated'))
         cycle = str(result.get('cycle') or '').upper()
         for row in rows:
             if not isinstance(row, dict):
                 continue
             ts = _to_timestamp(row.get('TIME', ''), cycle)
+            if ts is None:
+                diagnostics['invalid_period_rows'] += 1
+                continue
             numeric = pd.to_numeric(
                 str(row.get('DATA_VALUE', '') or '').replace(',', '').strip(),
                 errors='coerce',
             )
-            if ts is None or pd.isna(numeric):
+            if pd.isna(numeric):
+                diagnostics['invalid_value_rows'] += 1
                 continue
+            diagnostics['accepted_rows'] += 1
+            seen_times.append(ts)
             code = str(row.get('STAT_CODE') or result.get('stat_code') or '')
             item_codes = tuple(str(row.get(k) or '') for k in ITEM_CODE_KEYS)
             series_key = (code, cycle, *item_codes)
@@ -159,9 +177,20 @@ def build_report(question: str, calls: list[dict], today: date | None = None) ->
                 'truncated': bool(result.get('truncated')),
             })
 
+    if seen_times:
+        diagnostics['available_period'] = [min(seen_times).strftime('%Y-%m-%d'),
+                                           max(seen_times).strftime('%Y-%m-%d')]
     if not records:
+        warnings = []
+        if diagnostics['calls'] and diagnostics['successful_calls'] == 0:
+            warnings.append('ECOS 통계 조회가 정상 완료되지 않았습니다. MCP 호출 상세 기록을 확인해 주세요.')
+        elif diagnostics['received_rows'] == 0 and diagnostics['successful_calls']:
+            warnings.append('ECOS가 반환한 시계열 행이 없습니다. 통계항목과 조회 기간을 확인해 주세요.')
+        elif diagnostics['received_rows']:
+            warnings.append('ECOS 응답은 있으나 시점(TIME) 또는 수치(DATA_VALUE)를 읽을 수 없습니다.')
         return {'charts': [], 'tables': [], 'summary': [], 'sources': sources,
-                'truncated': truncated, 'has_data': False, 'warnings': []}
+                'truncated': truncated, 'has_data': False, 'warnings': warnings,
+                'diagnostics': diagnostics}
 
     frame = pd.DataFrame.from_records(records)
     catalog = frame.groupby('series_key', sort=False).first()
@@ -239,6 +268,10 @@ def build_report(question: str, calls: list[dict], today: date | None = None) ->
 
     if truncated:
         warnings.append('ECOS 조회 결과 일부가 행 수 상한에 의해 잘렸습니다. 전체 기간 결과로 해석하지 마세요.')
+    if not charts and diagnostics['available_period']:
+        warnings.append('ECOS 수치는 받았지만 질문의 표시 기간에 포함되는 값이 없습니다. '
+                        f"ECOS 수신 범위: {diagnostics['available_period'][0]} ~ "
+                        f"{diagnostics['available_period'][1]}")
     return {'charts': charts, 'tables': tables, 'summary': summary[:12],
             'sources': sources, 'truncated': truncated, 'warnings': list(dict.fromkeys(warnings)),
-            'has_data': bool(charts)}
+            'has_data': bool(charts), 'diagnostics': diagnostics}

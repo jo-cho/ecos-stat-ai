@@ -125,3 +125,25 @@ python -m pytest -q
 ```
 
 API 키 없이 실행되는 모의 테스트로 기간 필터링, 두 지역의 다중 그래프, 전년동월비 계산, 결측월 처리, 표·그래프 자동 표시 여부를 확인합니다.
+
+## v3 수정: MCP 호출 성공 후 표·그래프가 나타나지 않는 경우
+
+이 버전은 MCP 클라이언트의 `structured_content`와 `content`(JSON 텍스트) 응답을 모두 해석합니다.
+기존 버전은 `get_statistic_data`가 정상 동작해도 `structured_content`가 없는 환경에서는
+JSON 텍스트가 `{'content': [...]}` 형태로 저장되어 통계 수치가 무시될 수 있었습니다.
+
+**기존 GitHub 저장소에 반영할 파일**
+
+- `app.py` (빈 데이터 오류를 조회 실패/실제 0건/형식 오류/기간 불일치로 구별)
+- `ecos_ai/agent.py` (MCP 결과 정규화, 행 수 기록)
+- `ecos_ai/presentation.py` (과거 세션 응답 포맷까지 해석, 데이터 진단)
+- `ecos_ai/server.py` (`dict[str, Any]` 출력 타입으로 MCP 구조화 응답 명시)
+- `ecos_ai/mcp_result.py` (**새 파일**, MCP JSON 응답 호환 처리)
+
+MCP 통계 조회 결과를 표시할 수 없으면 접힌 **데이터 진단** 영역에서
+조회 횟수, ECOS가 반환한 행 수, 유효 수치 수, 잘못된 시점/값 건수를 확인하세요.
+여기에는 API 키와 원문 조회 URL을 표시하지 않습니다.
+
+테스트: `python -m pytest -q` (외부 API 키 없이 수행). 실제 ECOS/OpenAI 계정은 개발자가 연결 후 검증해야 합니다.
+
+기존 대화에 잘못 저장된 결과가 있다면 v3 배포 후 질문을 다시 실행하는 것이 가장 확실합니다.

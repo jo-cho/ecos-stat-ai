@@ -77,11 +77,32 @@ def _display_answer(message: dict, index: int, question: str) -> None:
                 mime='text/csv',
                 key=f'csv_{index}_{number}',
             )
-    elif any(c.get('tool') == 'get_statistic_data' for c in message.get('calls', [])):
-        st.info('유효한 통계 수치가 없어 그래프와 통계표를 표시할 수 없습니다. 조회 기간·항목을 확인해 주세요.')
+    else:
+        diagnostic = report.get('diagnostics', {})
+        if diagnostic.get('calls', 0) == 0:
+            st.info('이번 답변에서는 ECOS 수치 조회가 실행되지 않았습니다. 통계표나 항목 검색만 진행됐을 수 있습니다.')
+        elif diagnostic.get('errors'):
+            st.error('ECOS 수치 조회 결과를 처리하지 못했습니다. 아래 상세 진단을 확인해 주세요.')
+        elif diagnostic.get('received_rows', 0) == 0:
+            st.info('ECOS 통계 조회는 수행했지만 해당 조건에서 반환된 수치가 없습니다.')
+        elif diagnostic.get('accepted_rows', 0) == 0:
+            st.error('ECOS 응답은 도착했지만 시점 또는 수치 형식을 해석하지 못했습니다.')
+        else:
+            st.info('ECOS 원자료는 받았지만 질문에서 지정한 기간에 해당하는 결과가 없습니다.')
 
     for warning in report['warnings']:
         st.warning(warning)
+
+    if not report['has_data'] and report.get('diagnostics', {}).get('calls', 0):
+        with st.expander('데이터 진단 (클릭하여 보기)', expanded=False):
+            diagnostic = report['diagnostics']
+            st.write(f"시계열 조회 횟수: {diagnostic['calls']}회 · 성공: {diagnostic['successful_calls']}회")
+            st.write(f"ECOS 수신 행: {diagnostic['received_rows']}건 · 유효 수치: {diagnostic['accepted_rows']}건")
+            st.write(f"시점 해석 실패: {diagnostic['invalid_period_rows']}건 · 수치 해석 실패: {diagnostic['invalid_value_rows']}건")
+            if diagnostic.get('available_period'):
+                st.write('받은 데이터 기간: ' + ' ~ '.join(diagnostic['available_period']))
+            if diagnostic.get('errors'):
+                st.write('도구 오류 유형: ' + ', '.join(dict.fromkeys(diagnostic['errors'])))
 
     # 상세 조회 기준과 호출 기록은 처음부터 열지 않음
     if report['sources']:
@@ -100,7 +121,8 @@ def _display_answer(message: dict, index: int, question: str) -> None:
     if message.get('calls'):
         with st.expander('MCP 호출 기록 (클릭하여 보기)', expanded=False):
             for call in message['calls']:
-                st.write(f"{call['tool']} · {'성공' if call['success'] else '오류'}")
+                st.write(f"{call['tool']} · {'성공' if call['success'] else '오류'}" +
+                         (f" · 받은 행 {call['row_count']}개" if call.get('row_count') is not None else ''))
                 # 인증키는 도구 인수에 넣지 않으므로 화면으로 노출되지 않음
                 st.code(json.dumps(call.get('arguments', {}), ensure_ascii=False, indent=2), language='json')
 

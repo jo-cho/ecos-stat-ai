@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 from mcp import Client, StdioServerParameters
 from mcp.types import TextContent
+from ecos_ai.mcp_result import normalize_mcp_payload, normalize_series_payload
 from openai import AsyncOpenAI
 
 RULES = '''당신은 한국은행 ECOS 경제통계 조회 도우미입니다.
@@ -84,16 +85,21 @@ async def answer(question: str, history: list[dict] | None = None, model: str | 
                     if result.is_error:
                         payload = {'error': 'ECOS 도구 실행 실패', 'detail': ' | '.join(
                             x.text for x in result.content if isinstance(x, TextContent))[:500]}
-                    elif result.structured_content is not None:
-                        payload = result.structured_content
                     else:
-                        payload = {'content': [x.text for x in result.content if isinstance(x, TextContent)]}
+                        # MCP SDK는 구조화 채널과 JSON 텍스트 채널을 모두 지원
+                        payload = normalize_mcp_payload(result.structured_content, result.content)
+                        if f.name == 'get_statistic_data':
+                            # 행 데이터가 없으면 성공 처리하지 않고 원인을 전달
+                            payload = normalize_series_payload(payload)
                 except Exception as exc:
                     # 오류에 포함될 수 있는 인증정보 및 내부 경로는 모델에 전달하지 않음
-                    payload = {'error': type(exc).__name__, 'detail': '요청 검증 또는 도구 통신 실패'}
+                    payload = {'error': type(exc).__name__, 'detail': ('MCP 결과를 ECOS 데이터로 해석하지 못했습니다.'
+                                                  if isinstance(exc, ValueError) else '요청 검증 또는 도구 통신 실패')}
                 calls.append({'tool': f.name, 'arguments': args,
                               'success': 'error' not in payload,
-                              'result': payload if f.name == 'get_statistic_data' and 'error' not in payload else None})
+                              'result': payload if f.name == 'get_statistic_data' and 'error' not in payload else None,
+                              'row_count': len(payload.get('rows', [])) if f.name == 'get_statistic_data' and isinstance(payload.get('rows'), list) else None,
+                              'error_type': payload.get('error')})
                 messages.append({'type': 'function_call_output', 'call_id': f.call_id,
                                  'output': json.dumps(payload, ensure_ascii=False, default=str)[:180000]})
         report_progress('finishing')
