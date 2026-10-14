@@ -7,7 +7,11 @@ from io import BytesIO
 from threading import RLock
 
 import matplotlib
-matplotlib.use("Agg")
+# 그래프 글꼴을 맑은 고딕으로 설정
+matplotlib.rcParams["font.family"] = "Malgun Gothic"
+# 음수 부호가 깨지는 현상 방지
+matplotlib.rcParams["axes.unicode_minus"] = False
+
 from matplotlib.figure import Figure
 from matplotlib import dates as mdates
 from matplotlib import ticker as mticker
